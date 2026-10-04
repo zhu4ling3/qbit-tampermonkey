@@ -6,7 +6,7 @@
 
 适用于 Firefox + Tampermonkey 的 PT 辅助脚本，用于从 NexusPHP 架构的 PT 网站捕获 Torrent/Magnet 链接，并通过 qBittorrent Web API 添加下载任务。
 
-当前已针对 `springsunday.net` 进行适配。
+当前已针对 `CN PT` 进行适配。
 
 ## 页面捕获
 
@@ -14,7 +14,7 @@
 
 - 扫描种子列表中的 Torrent/Magnet 链接。
 - 从同一表格行提取英文名称和中文名称。
-- SpringSunday 的 Torrent URL 必须包含非空 `passkey`。
+- 某站 的 Torrent URL 必须包含非空 `passkey`。
 - 点击单个链接时，只将该 Torrent 带入添加对话框。
 - 通过右键菜单扫描时，将页面中的全部 Torrent 带入批量添加对话框。
 
