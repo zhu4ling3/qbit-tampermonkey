@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent Torrent Interceptor - CN PT Enhanced
 // @namespace    https://github.com/zhu4ling3/qbit-tampermonkey
-// @version      1.16.2-cn
+// @version      1.17.1-cn
 // @description  捕获 PT 站点的 Torrent/Magnet 链接，支持筛选、批量检查并发送到 qBittorrent
 // @author       ZL
 // @match        *://*/*
@@ -69,8 +69,11 @@
         .qbit-cnpt-actions button:disabled { cursor:wait; opacity:.65 }
         .qbit-cnpt-primary { background:#1976d2; color:#fff }
         .qbit-cnpt-secondary { background:#e5e5e5; color:#111 }
-        .qbit-cnpt-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto; gap:12px; align-items:end; margin-bottom:12px }
+        .qbit-cnpt-toolbar { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; align-items:end; margin-bottom:12px }
         .qbit-cnpt-toolbar label { margin:0 }
+        .qbit-cnpt-toolbar > .qbit-cnpt-row { grid-column:1 / -1 }
+        .qbit-cnpt-item-number { display:block; text-align:center; font-size:12px; color:#777 }
+        .qbit-cnpt-filter-total { margin-top:12px; text-align:left }
         .qbit-cnpt-list { border:1px solid #ccc; border-radius:7px; max-height:52vh; overflow:auto }
         .qbit-cnpt-item { display:grid; grid-template-columns:28px minmax(0,1fr) 110px; gap:8px; align-items:start; padding:10px; border-bottom:1px solid #ddd }
         .qbit-cnpt-item[hidden] { display:none }
@@ -86,7 +89,7 @@
         .qbit-cnpt-context-menu button { display:block; width:100%; padding:9px 12px; border:0; border-radius:5px; background:transparent; color:inherit; text-align:left; cursor:pointer }
         .qbit-cnpt-context-menu button:hover { background:#e8f1fb }
         .qbit-cnpt-context-hint { padding:5px 12px; color:#777; font-size:11px }
-        @media (max-width:680px) { .qbit-cnpt-toolbar { grid-template-columns:1fr } .qbit-cnpt-item { grid-template-columns:24px minmax(0,1fr) } .qbit-cnpt-status { grid-column:2; text-align:left } }
+        @media (max-width:680px) { .qbit-cnpt-item { grid-template-columns:24px minmax(0,1fr) } .qbit-cnpt-status { grid-column:2; text-align:left } }
         @media (prefers-color-scheme:dark) {
             .qbit-cnpt-box { background:#222; color:#eee }
             .qbit-cnpt-box input[type=text], .qbit-cnpt-box input[type=password] { background:#333; color:#eee; border-color:#666 }
@@ -149,7 +152,10 @@
             const response = await qbitRequest('/api/v2/auth/login', 'POST', body, {
                 'Content-Type': 'application/x-www-form-urlencoded',
             }, true);
-            if (response.status !== 200 || response.responseText !== 'Ok.') {
+            // 新版返回 204（无正文），旧版返回 200/Ok.；不能把旧版 Fails. 当成成功。
+            const succeeded = response.status === 204 ||
+                (response.status === 200 && String(response.responseText || '').trim() === 'Ok.');
+            if (!succeeded) {
                 notify(`qBittorrent 登录失败：HTTP ${response.status}`, 'error');
                 return false;
             }
@@ -519,6 +525,19 @@
         try { return new URL(link.getAttribute('href') || '', baseUrl).href; } catch { return ''; }
     }
 
+    function applyTorrentUrlParams(url, input) {
+        const query = String(input || '').trim().replace(/^[?&]/, '');
+        // 附加参数用于 HTTP 下载链接；Magnet 保持原样。
+        if (!query || isMagnet(url)) return url;
+        if (query.split('&').some(part => !part || !part.includes('=') || !part.split('=')[0].trim())) {
+            throw new Error('请使用 key=value&key2=value2 格式输入 URL 参数');
+        }
+        const parsed = new URL(url);
+        const extraParams = new URLSearchParams(query);
+        for (const [name, value] of extraParams) parsed.searchParams.set(name, value);
+        return parsed.href;
+    }
+
     function findResourceName(link, index, baseUrl = location.href, fallbackName = '') {
         if (fallbackName) return fallbackName.slice(0, 300);
         const row = link.closest('tr');
@@ -798,6 +817,9 @@
                 <label>Torrent 筛选
                     <input id="qbit-batch-filter" type="text" placeholder="输入多个条件，以空格分隔（全部满足）" autocomplete="off">
                 </label>
+                <label>指定url参数
+                    <input id="qbit-batch-url-params" type="text" placeholder="例如：https=1&amp;key=value" title="同名参数覆盖，留空不修改；Magnet 不修改" autocomplete="off">
+                </label>
                 <div class="qbit-cnpt-row">
                     <label><input id="qbit-batch-all" type="checkbox" ${items.length ? 'checked' : ''}> 全选</label>
                     <label><input id="qbit-batch-start" type="checkbox" ${CFG.autoStart ? 'checked' : ''}> 添加后立即启动</label>
@@ -808,7 +830,7 @@
             <div class="qbit-cnpt-list">
                 ${items.length ? items.map((item, index) => `
                     <div class="qbit-cnpt-item" data-index="${index}">
-                        <input class="qbit-batch-select" type="checkbox" checked aria-label="选择 ${escapeHtml(item.name)}">
+                        <div><input class="qbit-batch-select" type="checkbox" checked aria-label="选择 ${escapeHtml(item.name)}"><span class="qbit-cnpt-item-number">${index + 1}</span></div>
                         <div><div class="qbit-cnpt-name">${escapeHtml(item.name)}</div><a class="qbit-cnpt-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></div>
                         <div class="qbit-cnpt-status"><div class="qbit-cnpt-existence" data-role="existence"></div><div data-role="add-status">待添加</div></div>
                     </div>`).join('') : '<div class="qbit-cnpt-empty">当前页面未找到可能的 Torrent 或 Magnet 下载链接。</div>'}
@@ -816,10 +838,13 @@
             <div class="qbit-cnpt-actions">
                 <button class="qbit-cnpt-secondary" data-act="cancel">取消</button>
                 <button class="qbit-cnpt-primary" data-act="add" ${items.length ? '' : 'disabled'}>添加选中项</button>
-            </div>`;
+            </div>
+            <div class="qbit-cnpt-filter-total" role="status" aria-live="polite">筛选后的 Torrent 总数：<span id="qbit-batch-total">${items.length}</span></div>`;
 
         const all = box.querySelector('#qbit-batch-all');
         const filterInput = box.querySelector('#qbit-batch-filter');
+        const urlParamsInput = box.querySelector('#qbit-batch-url-params');
+        const originalItems = items.slice();
         const existenceCheck = box.querySelector('#qbit-batch-exists');
         const rows = [...box.querySelectorAll('.qbit-cnpt-item')];
         const selectedBoxes = [...box.querySelectorAll('.qbit-batch-select')];
@@ -832,10 +857,13 @@
         };
         const applyFilter = () => {
             const conditions = normalizeText(filterInput.value).toLocaleLowerCase().split(' ').filter(Boolean);
+            let visibleCount = 0;
             rows.forEach((row, index) => {
                 const searchable = `${items[index].name} ${items[index].url}`.toLocaleLowerCase();
                 row.hidden = !conditions.every(condition => searchable.includes(condition));
+                row.querySelector('.qbit-cnpt-item-number').textContent = row.hidden ? '' : String(++visibleCount);
             });
+            box.querySelector('#qbit-batch-total').textContent = String(visibleCount);
             updateSelectAllState();
         };
         all.addEventListener('change', () => rows.forEach((row, index) => {
@@ -846,12 +874,41 @@
         box.querySelector('[data-act="cancel"]').addEventListener('click', close);
 
         let existenceRunId = 0;
+        urlParamsInput.addEventListener('input', () => {
+            let updatedItems;
+            try {
+                updatedItems = originalItems.map((item, index) => {
+                    const url = applyTorrentUrlParams(item.url, urlParamsInput.value);
+                    return url === items[index].url ? items[index] : { url, name: item.name };
+                });
+                urlParamsInput.setCustomValidity('');
+            } catch (error) {
+                urlParamsInput.setCustomValidity(error.message);
+                return;
+            }
+            if (updatedItems.some((item, index) => item !== items[index])) {
+                ++existenceRunId;
+                existenceCheck.checked = false;
+                rows.forEach(row => { row.querySelector('[data-role="existence"]').textContent = ''; });
+            }
+            items = updatedItems;
+            rows.forEach((row, index) => {
+                const link = row.querySelector('.qbit-cnpt-link');
+                link.href = items[index].url;
+                link.textContent = items[index].url;
+            });
+            applyFilter();
+        });
         const setExistenceStatus = (index, text, state = '') => {
             const status = rows[index].querySelector('[data-role="existence"]');
             status.textContent = text;
             status.dataset.state = state;
         };
         existenceCheck.addEventListener('change', async () => {
+            if (!urlParamsInput.reportValidity()) {
+                existenceCheck.checked = false;
+                return;
+            }
             const runId = ++existenceRunId;
             if (!existenceCheck.checked) {
                 rows.forEach((row, index) => setExistenceStatus(index, ''));
@@ -894,12 +951,14 @@
 
         const addButton = box.querySelector('[data-act="add"]');
         addButton.addEventListener('click', async () => {
+            if (!urlParamsInput.reportValidity()) return;
             const chosen = items.filter((item, index) => !rows[index].hidden && selectedBoxes[index].checked);
             if (!chosen.length) {
                 notify('当前筛选结果中没有已选择的 Torrent', 'error');
                 return;
             }
             addButton.disabled = true;
+            urlParamsInput.disabled = true;
             box.querySelector('[data-act="cancel"]').disabled = true;
             const options = {
                 category: box.querySelector('#qbit-batch-category').value,
@@ -930,6 +989,7 @@
             const failed = chosen.length - succeeded;
             notify(`批量添加完成：成功 ${succeeded}，失败 ${failed}`, failed ? 'error' : 'ok');
             addButton.disabled = false;
+            urlParamsInput.disabled = false;
             box.querySelector('[data-act="cancel"]').disabled = false;
             addButton.textContent = '重试选中项';
         });
